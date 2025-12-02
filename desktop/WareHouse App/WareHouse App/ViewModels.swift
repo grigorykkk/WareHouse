@@ -21,7 +21,9 @@ final class WarehouseListViewModel: ObservableObject {
 
     var filteredWarehouses: [Warehouse] {
         let list = warehouses.filter { warehouse in
-            searchText.isEmpty || warehouse.name.localizedCaseInsensitiveContains(searchText)
+            searchText.isEmpty
+            || warehouse.name.localizedCaseInsensitiveContains(searchText)
+            || (warehouse.address?.localizedCaseInsensitiveContains(searchText) ?? false)
         }
         if sortByFillRate {
             return list.sorted { $0.fillRate > $1.fillRate }
@@ -101,13 +103,14 @@ final class WarehouseDetailViewModel: ObservableObject {
         inventoryError = nil
         do {
             let items = try await env.api.fetchInventory(for: warehouseId)
-            inventories[warehouseId] = items
+            let normalized = normalize(items)
+            inventories[warehouseId] = normalized
             inventoryOfflineLabel = nil
-            env.cache.save(CachedEntry(timestamp: Date(), value: items), for: .inventory(warehouseId))
+            env.cache.save(CachedEntry(timestamp: Date(), value: normalized), for: .inventory(warehouseId))
         } catch {
             env.logger.log("Inventory load failed: \(error.localizedDescription)")
             if let cached: CachedEntry<[InventoryItem]> = env.cache.load(for: .inventory(warehouseId)) {
-                inventories[warehouseId] = cached.value
+                inventories[warehouseId] = normalize(cached.value)
                 inventoryOfflineLabel = "Офлайн данные от \(format(date: cached.timestamp))"
             }
             inventoryError = error.localizedDescription
@@ -129,12 +132,11 @@ final class WarehouseDetailViewModel: ObservableObject {
         isSubmitting = true
         submissionMessage = nil
         defer { isSubmitting = false }
-        let payload = SupplyRequest(warehouseId: warehouseId, items: items.map { $0.asRequestItem })
+        let payload = SupplyRequest(items: items.map { $0.asRequestItem })
         do {
             let response = try await env.api.createSupply(payload)
-            inventories[warehouseId] = response.updatedInventory
-            env.cache.save(CachedEntry(timestamp: Date(), value: response.updatedInventory), for: .inventory(warehouseId))
-            submissionMessage = response.message ?? "Поставка создана."
+            await loadInventory(for: warehouseId)
+            submissionMessage = response.fullyPlaced ? "Поставка размещена полностью." : "Поставка размещена частично."
             return true
         } catch {
             env.logger.log("Supply failed: \(error.localizedDescription)")
@@ -155,11 +157,13 @@ final class WarehouseDetailViewModel: ObservableObject {
         defer { isSubmitting = false }
         do {
             let response = try await env.api.createTransfer(request)
-            inventories[request.fromWarehouseId] = response.sourceInventory
-            inventories[request.toWarehouseId] = response.targetInventory
-            env.cache.save(CachedEntry(timestamp: Date(), value: response.sourceInventory), for: .inventory(request.fromWarehouseId))
-            env.cache.save(CachedEntry(timestamp: Date(), value: response.targetInventory), for: .inventory(request.toWarehouseId))
-            submissionMessage = response.message ?? "Перемещение завершено."
+            if response.moved {
+                await loadInventory(for: request.sourceWarehouseId)
+                await loadInventory(for: request.destinationWarehouseId)
+                submissionMessage = "Перемещение завершено."
+            } else {
+                submissionMessage = "Перемещение не выполнено."
+            }
             return response
         } catch {
             env.logger.log("Transfer failed: \(error.localizedDescription)")
@@ -186,14 +190,19 @@ final class WarehouseDetailViewModel: ObservableObject {
 
     private func validateTransfer(request: TransferRequest) -> [String] {
         var problems: [String] = []
-        if request.fromWarehouseId == request.toWarehouseId {
+        if request.sourceWarehouseId == request.destinationWarehouseId {
             problems.append("Исходный и целевой склады должны различаться.")
         }
         if request.items.isEmpty {
             problems.append("Добавьте позиции для перемещения.")
         }
-        for item in request.items where item.quantity <= 0 {
-            problems.append("Количество для перемещения должно быть больше нуля.")
+        for item in request.items {
+            if item.productId <= 0 {
+                problems.append("ProductId должен быть положительным.")
+            }
+            if item.quantity <= 0 {
+                problems.append("Количество для перемещения должно быть больше нуля.")
+            }
         }
         return problems
     }
@@ -203,6 +212,22 @@ final class WarehouseDetailViewModel: ObservableObject {
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+
+    private func normalize(_ items: [InventoryItem]) -> [InventoryItem] {
+        items.map { item in
+            var copy = item
+            if copy.totalVolume == 0 {
+                copy.totalVolume = copy.unitVolume * Double(copy.quantity)
+            }
+            if copy.totalPrice == 0 {
+                copy.totalPrice = copy.unitPrice * Double(copy.quantity)
+            }
+            if copy.isExpired == nil {
+                copy.isExpired = copy.shelfLifeDays <= 0
+            }
+            return copy
+        }
     }
 }
 
@@ -281,7 +306,11 @@ final class LogViewModel: ObservableObject {
             }
             if !searchText.isEmpty {
                 let itemsText = entry.changedItems.map { $0.name }.joined(separator: ", ")
-                matches = matches && (itemsText.localizedCaseInsensitiveContains(searchText) || entry.operationType.localizedCaseInsensitiveContains(searchText))
+                matches = matches && (
+                    entry.message.localizedCaseInsensitiveContains(searchText)
+                    || entry.operationType.localizedCaseInsensitiveContains(searchText)
+                    || itemsText.localizedCaseInsensitiveContains(searchText)
+                )
             }
             return matches
         }

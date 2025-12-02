@@ -6,7 +6,7 @@ struct AppConfiguration: Codable, Equatable {
     var token: String?
 
     static var `default`: AppConfiguration {
-        AppConfiguration(baseURL: URL(string: "https://localhost:5030")!, token: nil)
+        AppConfiguration(baseURL: URL(string: "http://localhost:5030")!, token: nil)
     }
 
     static private let storageKey = "WareHouseApp.Configuration"

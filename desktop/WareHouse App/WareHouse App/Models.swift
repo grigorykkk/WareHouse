@@ -5,21 +5,28 @@ import Foundation
 struct Warehouse: Identifiable, Codable, Equatable, Hashable {
     let id: Int
     var name: String
-    var capacity: Int
-    var occupiedVolume: Int
-    var address: String?
-    var hasIssues: Bool?
-    var needsSortingOptimization: Bool?
-    var needsExpiredRemoval: Bool?
-    var needsTypeCorrection: Bool?
+    var address: String? = nil
+    var type: String? = nil
+    var capacity: Double
+    var occupiedVolume: Double
+    var freeVolume: Double? = nil
+    var hasIssues: Bool? = nil
+    var needsSortingOptimization: Bool? = nil
+    var needsExpiredRemoval: Bool? = nil
+    var needsTypeCorrection: Bool? = nil
+    var productKindsCount: Int? = nil
 
     var fillRate: Double {
         guard capacity > 0 else { return 0 }
-        return Double(occupiedVolume) / Double(capacity)
+        let used = freeVolume.map { capacity - $0 } ?? occupiedVolume
+        return used / capacity
     }
 
-    var remainingVolume: Int {
-        max(capacity - occupiedVolume, 0)
+    var remainingVolume: Double {
+        if let freeVolume {
+            return max(freeVolume, 0)
+        }
+        return max(capacity - occupiedVolume, 0)
     }
 }
 
@@ -32,16 +39,10 @@ struct InventoryItem: Identifiable, Codable, Equatable, Hashable {
     var unitPrice: Double
     var shelfLifeDays: Int
     var quantity: Int
-    var isExpired: Bool?
-    var type: String?
-
-    var totalVolume: Double {
-        unitVolume * Double(quantity)
-    }
-
-    var totalPrice: Double {
-        unitPrice * Double(quantity)
-    }
+    var totalVolume: Double = 0
+    var totalPrice: Double = 0
+    var isExpired: Bool? = nil
+    var type: String? = nil
 }
 
 struct SupplyItem: Identifiable, Codable, Equatable, Hashable {
@@ -97,14 +98,13 @@ struct TransferItem: Identifiable, Codable, Equatable, Hashable {
     }
 
     var asRequestItem: TransferRequest.Item {
-        TransferRequest.Item(productId: productId, name: name, quantity: quantity)
+        TransferRequest.Item(productId: productId, quantity: quantity)
     }
 }
 
 // MARK: - Requests / Responses
 
 struct SupplyRequest: Codable {
-    var warehouseId: Int
     var items: [Item]
 
     struct Item: Codable {
@@ -119,31 +119,34 @@ struct SupplyRequest: Codable {
 }
 
 struct SupplyResponse: Codable {
-    var updatedInventory: [InventoryItem]
-    var message: String?
+    var fullyPlaced: Bool
 }
 
 struct TransferRequest: Codable {
-    var fromWarehouseId: Int
-    var toWarehouseId: Int
+    var sourceWarehouseId: Int
+    var destinationWarehouseId: Int
     var items: [Item]
 
     struct Item: Codable {
         var productId: Int
-        var name: String
         var quantity: Int
     }
 }
 
 struct TransferResponse: Codable {
-    var sourceInventory: [InventoryItem]
-    var targetInventory: [InventoryItem]
-    var logEntry: AuditLogEntry?
-    var message: String?
+    var moved: Bool
 }
 
-struct AnalysisRequest: Codable {
-    var warehouseIds: [Int]?
+struct AnalysisEntry: Codable, Equatable, Hashable {
+    var warehouseId: Int
+    var address: String?
+    var hasIssues: Bool
+    var needsSortingOptimization: Bool
+    var needsExpiredRemoval: Bool
+    var needsTypeCorrection: Bool
+    var usedVolume: Double
+    var freeVolume: Double
+    var comment: String?
 }
 
 struct AnalysisResult: Codable, Equatable, Hashable {
@@ -151,16 +154,33 @@ struct AnalysisResult: Codable, Equatable, Hashable {
     var needsSortingOptimization: Bool
     var needsExpiredRemoval: Bool
     var needsTypeCorrection: Bool
-    var problemWarehouseIds: [Int]?
+    var entries: [AnalysisEntry]? = nil
+    var problemWarehouseIds: [Int]? = nil
+}
+
+extension AnalysisResult {
+    static func aggregate(from entries: [AnalysisEntry]) -> AnalysisResult {
+        let problems = entries
+            .filter { $0.hasIssues || $0.needsExpiredRemoval || $0.needsSortingOptimization || $0.needsTypeCorrection }
+            .map { $0.warehouseId }
+
+        return AnalysisResult(hasIssues: entries.contains { $0.hasIssues },
+                              needsSortingOptimization: entries.contains { $0.needsSortingOptimization },
+                              needsExpiredRemoval: entries.contains { $0.needsExpiredRemoval },
+                              needsTypeCorrection: entries.contains { $0.needsTypeCorrection },
+                              entries: entries,
+                              problemWarehouseIds: problems.isEmpty ? nil : problems)
+    }
 }
 
 struct AuditLogEntry: Identifiable, Codable, Equatable, Hashable {
     var id: UUID
     var timestamp: Date
+    var message: String = ""
     var sourceWarehouseId: Int?
     var targetWarehouseId: Int?
-    var operationType: String
-    var changedItems: [InventoryDelta]
+    var operationType: String = ""
+    var changedItems: [InventoryDelta] = []
 }
 
 struct InventoryDelta: Identifiable, Codable, Equatable, Hashable {
@@ -237,13 +257,16 @@ enum APIError: LocalizedError {
 extension Warehouse {
     static let sample = Warehouse(id: 1,
                                   name: "Main Hub",
+                                  address: "Industrial Ave, 12",
+                                  type: "General",
                                   capacity: 10_000,
                                   occupiedVolume: 6_200,
-                                  address: "Industrial Ave, 12",
+                                  freeVolume: 3_800,
                                   hasIssues: true,
                                   needsSortingOptimization: true,
                                   needsExpiredRemoval: false,
-                                  needsTypeCorrection: false)
+                                  needsTypeCorrection: false,
+                                  productKindsCount: 4)
 }
 
 extension InventoryItem {
@@ -255,6 +278,8 @@ extension InventoryItem {
                                       unitPrice: 100,
                                       shelfLifeDays: 365,
                                       quantity: 50,
+                                      totalVolume: 60,
+                                      totalPrice: 5_000,
                                       isExpired: false,
                                       type: "Materials")
 }
@@ -271,6 +296,7 @@ extension AuditLogEntry {
     static func sample(now: Date = .init()) -> AuditLogEntry {
         AuditLogEntry(id: UUID(),
                       timestamp: now,
+                      message: "Sample transfer",
                       sourceWarehouseId: 1,
                       targetWarehouseId: 2,
                       operationType: "Transfer",

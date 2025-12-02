@@ -27,8 +27,8 @@ final class WarehouseAPITests: XCTestCase {
     func testFetchWarehousesDecodesList() async throws {
         let body = """
         [
-          { "id": 1, "name": "Main", "capacity": 1000, "occupiedVolume": 200 },
-          { "id": 2, "name": "Backup", "capacity": 500, "occupiedVolume": 100 }
+          { "id": 1, "type": "General", "address": "Main st", "capacity": 1000, "freeVolume": 800, "usedVolume": 200, "productKindsCount": 3 },
+          { "id": 2, "type": "Cold", "address": "Backup", "capacity": 500, "freeVolume": 400, "usedVolume": 100, "productKindsCount": 2 }
         ]
         """.data(using: .utf8)!
 
@@ -43,7 +43,8 @@ final class WarehouseAPITests: XCTestCase {
         let warehouses = try await api.fetchWarehouses()
         let first = try XCTUnwrap(warehouses.first)
         XCTAssertEqual(warehouses.count, 2)
-        XCTAssertEqual(first.name, "Main")
+        XCTAssertEqual(first.name, "Склад 1 (General)")
+        XCTAssertEqual(first.address, "Main st")
         XCTAssertEqual(first.fillRate, 0.2, accuracy: 0.01)
     }
 
@@ -60,7 +61,7 @@ final class WarehouseAPITests: XCTestCase {
             return (response, errorBody)
         }
 
-        let request = SupplyRequest(warehouseId: 1, items: [])
+        let request = SupplyRequest(items: [])
         do {
             _ = try await api.createSupply(request)
             XCTFail("Expected to throw")

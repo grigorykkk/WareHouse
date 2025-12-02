@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/grigory/VS Code Projects/Uni/WareHouse/WareHouse/WareHouse.csproj": {}
+    "/Users/grigory/VS Code Projects/Uni/WareHouse/backend/WareHouse/WareHouse.csproj": {}
   },
   "projects": {
-    "/Users/grigory/VS Code Projects/Uni/WareHouse/WareHouse/WareHouse.csproj": {
+    "/Users/grigory/VS Code Projects/Uni/WareHouse/backend/WareHouse/WareHouse.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/grigory/VS Code Projects/Uni/WareHouse/WareHouse/WareHouse.csproj",
+        "projectUniqueName": "/Users/grigory/VS Code Projects/Uni/WareHouse/backend/WareHouse/WareHouse.csproj",
         "projectName": "WareHouse",
-        "projectPath": "/Users/grigory/VS Code Projects/Uni/WareHouse/WareHouse/WareHouse.csproj",
+        "projectPath": "/Users/grigory/VS Code Projects/Uni/WareHouse/backend/WareHouse/WareHouse.csproj",
         "packagesPath": "/Users/grigory/.nuget/packages/",
-        "outputPath": "/Users/grigory/VS Code Projects/Uni/WareHouse/WareHouse/obj/",
+        "outputPath": "/Users/grigory/VS Code Projects/Uni/WareHouse/backend/WareHouse/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/grigory/.nuget/NuGet/NuGet.Config"

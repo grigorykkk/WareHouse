@@ -21,9 +21,10 @@ struct ContentView: View {
         if ProcessInfo.processInfo.arguments.contains("-uiTestSampleData") {
             let secondary = Warehouse(id: 2,
                                       name: "Secondary",
+                                      address: "Тестовый адрес 2",
+                                      type: "General",
                                       capacity: 2000,
                                       occupiedVolume: 500,
-                                      address: "Тестовый адрес 2",
                                       hasIssues: false,
                                       needsSortingOptimization: false,
                                       needsExpiredRemoval: true,
@@ -214,13 +215,13 @@ struct WarehouseRow: View {
             ProgressView(value: warehouse.fillRate) {
                 Text("Заполнено")
             } currentValueLabel: {
-                Text("\(warehouse.occupiedVolume)/\(warehouse.capacity)")
+                Text("\(formatVolume(warehouse.occupiedVolume))/\(formatVolume(warehouse.capacity))")
             }
             .accessibilityHint("Емкость склада \(warehouse.capacity)")
             .tint(warehouse.fillRate > 0.85 ? .red : .blue)
 
             HStack {
-                Label("Остаток \(warehouse.remainingVolume)", systemImage: "cube.box")
+                Label("Остаток \(formatVolume(warehouse.remainingVolume))", systemImage: "cube.box")
                 if warehouse.needsExpiredRemoval == true {
                     Label("Просрочка", systemImage: "clock.badge.exclamationmark")
                         .foregroundStyle(.orange)
@@ -239,6 +240,10 @@ struct WarehouseRow: View {
                 .fill(isProblem ? Color.red.opacity(0.08) : Color.gray.opacity(0.08))
         )
         .accessibilityElement(children: .combine)
+    }
+
+    private func formatVolume(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(value))" : String(format: "%.2f", value)
     }
 }
 
@@ -290,8 +295,8 @@ struct WarehouseCard: View {
                     Text(warehouse.address ?? "Адрес не указан")
                         .foregroundStyle(.secondary)
                     HStack(spacing: 12) {
-                        Label("Емкость \(warehouse.capacity)", systemImage: "shippingbox")
-                        Label("Свободно \(warehouse.remainingVolume)", systemImage: "square.and.arrow.down")
+                        Label("Емкость \(formatVolume(warehouse.capacity))", systemImage: "shippingbox")
+                        Label("Свободно \(formatVolume(warehouse.remainingVolume))", systemImage: "square.and.arrow.down")
                     }
                     .font(.callout)
                 }
@@ -311,6 +316,10 @@ struct WarehouseCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityHint("Карточка склада с емкостью и статусом")
     }
+
+    private func formatVolume(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(value))" : String(format: "%.2f", value)
+    }
 }
 
 struct IssueBadges: View {
@@ -318,26 +327,31 @@ struct IssueBadges: View {
     let analysis: AnalysisResult?
 
     var body: some View {
+        let entry = analysisEntry
         HStack {
-            if warehouse.hasIssues == true || (analysis?.problemWarehouseIds?.contains(warehouse.id) == true) {
+            if warehouse.hasIssues == true || entry?.hasIssues == true || (analysis?.problemWarehouseIds?.contains(warehouse.id) == true) {
                 Label("Обнаружены проблемы", systemImage: "exclamationmark.circle.fill")
                     .foregroundStyle(.red)
             }
-            if warehouse.needsExpiredRemoval == true || analysis?.needsExpiredRemoval == true {
+            if warehouse.needsExpiredRemoval == true || entry?.needsExpiredRemoval == true {
                 Label("Убрать просрочку", systemImage: "trash.slash")
                     .foregroundStyle(.orange)
             }
-            if warehouse.needsSortingOptimization == true || analysis?.needsSortingOptimization == true {
+            if warehouse.needsSortingOptimization == true || entry?.needsSortingOptimization == true {
                 Label("Оптимизировать сортировку", systemImage: "arrow.up.arrow.down.circle")
                     .foregroundStyle(.purple)
             }
-            if warehouse.needsTypeCorrection == true || analysis?.needsTypeCorrection == true {
+            if warehouse.needsTypeCorrection == true || entry?.needsTypeCorrection == true {
                 Label("Проверить типы", systemImage: "info.circle")
                     .foregroundStyle(.yellow)
             }
         }
         .font(.callout)
         .accessibilityElement(children: .combine)
+    }
+
+    private var analysisEntry: AnalysisEntry? {
+        analysis?.entries?.first(where: { $0.warehouseId == warehouse.id })
     }
 }
 
@@ -601,8 +615,8 @@ struct TransferFormSection: View {
 
             Button {
                 guard let target = targetWarehouse else { return }
-                let payload = TransferRequest(fromWarehouseId: currentWarehouse.id,
-                                              toWarehouseId: target.id,
+                let payload = TransferRequest(sourceWarehouseId: currentWarehouse.id,
+                                              destinationWarehouseId: target.id,
                                               items: items.map { $0.asRequestItem })
                 Task {
                     _ = await viewModel.submitTransfer(request: payload)
@@ -624,7 +638,7 @@ struct TransferWarnings: View {
 
     var body: some View {
         let expired = inventory.filter { $0.isExpired == true }
-        let unsupported = inventory.filter { ($0.type ?? "").isEmpty }
+        let unsupported = inventory.filter { $0.type?.isEmpty == true }
         VStack(alignment: .leading, spacing: 4) {
             if !expired.isEmpty {
                 Label("Внимание: есть просроченные товары", systemImage: "exclamationmark.triangle")
@@ -801,6 +815,8 @@ struct LogsScreen: View {
                         Text(log.timestamp.formatted(date: .abbreviated, time: .shortened))
                             .foregroundStyle(.secondary)
                     }
+                    Text(log.message)
+                        .font(.body)
                     HStack {
                         if let source = log.sourceWarehouseId {
                             Text("Из: \(warehouseName(for: source))")
@@ -810,8 +826,13 @@ struct LogsScreen: View {
                         }
                     }
                     .font(.callout)
-                    Text("Позиции: \(log.changedItems.map { \"\($0.name) (\($0.quantityChange))\" }.joined(separator: ", "))")
-                        .font(.caption)
+                    if !log.changedItems.isEmpty {
+                        let itemsSummary = log.changedItems
+                            .map { "\($0.name) (\($0.quantityChange))" }
+                            .joined(separator: ", ")
+                        Text("Позиции: \(itemsSummary)")
+                            .font(.caption)
+                    }
                 }
                 .padding(.vertical, 6)
             }
@@ -842,7 +863,7 @@ struct LogsScreen: View {
                     Text("Все").tag(Optional<String>.none)
                     Text("Supply").tag(Optional("Supply"))
                     Text("Transfer").tag(Optional("Transfer"))
-                    Text("Analysis").tag(Optional("Analysis"))
+                    Text("Log").tag(Optional("Log"))
                 }
                 .pickerStyle(.menu)
             }
